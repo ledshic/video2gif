@@ -1,8 +1,6 @@
-# Bundled FFmpeg
+# Bundled ffmpeg (optional)
 
-Place platform binaries here so packaged builds do **not** require users to install ffmpeg.
-
-## Layout
+Place platform binaries here for packaging:
 
 ```
 resources/ffmpeg/
@@ -14,14 +12,10 @@ resources/ffmpeg/
   win32-arm64/ffmpeg.exe
 ```
 
-Optional: also place `ffprobe` / `ffprobe.exe` alongside for duration probing without PATH.
+Also include `ffprobe` / `ffprobe.exe` beside `ffmpeg` when possible.
 
-## Development (this Linux box)
+- **Dev**: system `ffmpeg` on PATH, or `VIDEO_SDK_FFMPEG` / `VIDEO2GIF_FFMPEG`.
+- **Tauri packaging**: listed under `src-tauri/tauri.conf.json` → `bundle.resources`.
+  Alternatively use Tauri `externalBin` / sidecar (rename binaries to `ffmpeg-<target-triple>`).
 
-System ffmpeg is fine. `electron/ffmpeg.js` falls back to `ffmpeg` on PATH when no bundled binary exists.
-
-## Packaging
-
-`electron-builder` `extraResources` copies `resources/ffmpeg/${os}-${arch}` into the app’s `resources/ffmpeg/${os}-${arch}`.
-
-See `npm run ffmpeg:info` and the root README.
+Sources: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases), `ffmpeg-static` npm package, etc.

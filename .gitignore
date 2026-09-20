@@ -6,6 +6,9 @@ tmp-smoke/
 .DS_Store
 .env
 .env.*
+target/
+src-tauri/target/
+gen/
 resources/ffmpeg/linux-*/ffmpeg
 resources/ffmpeg/darwin-*/ffmpeg
 resources/ffmpeg/win32-*/ffmpeg.exe

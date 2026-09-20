@@ -2,77 +2,38 @@
   "name": "video2gif",
   "private": true,
   "version": "1.0.0",
-  "description": "跨平台视频转 GIF 桌面应用（Electron + Vite + React）",
+  "description": "跨平台视频转 GIF 桌面应用（Tauri 2 + Vite + React）",
   "author": "ledshic",
-  "main": "electron/main.cjs",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "electron:build": "npm run build && electron-builder",
-    "smoke": "node scripts/smoke-test.mjs",
-    "ffmpeg:info": "node scripts/ffmpeg-bundle-info.mjs"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "smoke": "cargo test -p video-sdk --test smoke_convert -- --nocapture",
+    "sdk:test": "cargo test -p video-sdk",
+    "check:rust": "cargo check -p video-sdk && cargo check -p video2gif"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@video2gif/sdk": "file:packages/video-sdk",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@types/node": "^24.13.6",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.6.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
-    "concurrently": "^8.2.2",
-    "cross-env": "^10.1.0",
-    "electron": "^33.2.1",
-    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "oxlint": "^1.81.0",
     "typescript": "~5.8.3",
-    "vite": "^8.3.0",
-    "wait-on": "^9.1.0"
-  },
-  "build": {
-    "appId": "com.ledshic.video2gif",
-    "productName": "Video2GIF",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/ffmpeg",
-        "to": "ffmpeg",
-        "filter": [
-          "**/*",
-          "!README.md"
-        ]
-      }
-    ],
-    "mac": {
-      "category": "public.app-category.graphics-design",
-      "target": [
-        "dmg",
-        "zip"
-      ]
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Graphics"
-    }
-  },
-  "type": "module"
+    "vite": "^8.3.0"
+  }
 }

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ConvertOptions } from '@video2gif/sdk';
+import * as api from './api';
 
 type Mode = 'simple' | 'advanced';
 
@@ -22,8 +24,7 @@ function formatDuration(sec: number | null) {
 }
 
 export default function App() {
-  const api = typeof window !== 'undefined' ? window.video2gif : undefined;
-  const inElectron = Boolean(api);
+  const inTauri = api.isTauri();
 
   const [mode, setMode] = useState<Mode>('simple');
   const [input, setInput] = useState('');
@@ -31,7 +32,6 @@ export default function App() {
   const [duration, setDuration] = useState<number | null>(null);
   const [ffmpegPath, setFfmpegPath] = useState('');
 
-  // Advanced / shared knobs
   const [width, setWidth] = useState(480);
   const [fps, setFps] = useState(12);
   const [start, setStart] = useState(0);
@@ -49,7 +49,7 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
-    if (!api) return;
+    if (!inTauri) return;
     api.getDefaults().then((d) => {
       setWidth(d.width);
       setFps(d.fps);
@@ -60,19 +60,25 @@ export default function App() {
       setSpeed(d.speed);
       setFfmpegPath(d.ffmpegPath);
     });
-  }, [api]);
+  }, [inTauri]);
 
   useEffect(() => {
-    if (!api) return;
-    return api.onProgress(({ pct, message }) => {
+    if (!inTauri) return;
+    let unlisten: (() => void) | undefined;
+    api.onProgress(({ pct, message }) => {
       if (pct >= 0) setProgress(pct);
       setProgressMsg(message);
+    }).then((fn) => {
+      unlisten = fn;
     });
-  }, [api]);
+    return () => {
+      unlisten?.();
+    };
+  }, [inTauri]);
 
   const loadFile = useCallback(
     async (filePath: string) => {
-      if (!api || !filePath) return;
+      if (!inTauri || !filePath) return;
       setInput(filePath);
       setError('');
       setResult('');
@@ -86,17 +92,17 @@ export default function App() {
         setTrimDuration(Math.ceil(dur));
       }
     },
-    [api, mode, trimDuration],
+    [inTauri, mode, trimDuration],
   );
 
   const onPickVideo = async () => {
-    if (!api) return;
+    if (!inTauri) return;
     const p = await api.selectVideo();
     if (p) await loadFile(p);
   };
 
   const onPickOutput = async () => {
-    if (!api) return;
+    if (!inTauri) return;
     const p = await api.selectOutput(basename(output) || 'output.gif');
     if (p) setOutput(p);
   };
@@ -104,13 +110,14 @@ export default function App() {
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    if (!api) return;
-    // Electron: file.path is available on File
+    if (!inTauri) return;
+    // Tauri 2 may expose path on File via webkitGetAsEntry / drag drop plugin.
+    // Prefer dialog if path missing.
     const file = e.dataTransfer.files?.[0] as File & { path?: string };
     if (!file) return;
     const p = file.path;
     if (!p) {
-      setError('请通过「选择视频」按钮选择本地文件（浏览器拖放无路径）。');
+      setError('请通过「选择视频」按钮选择本地文件（拖放路径在部分环境下不可用）。');
       return;
     }
     await loadFile(p);
@@ -130,14 +137,14 @@ export default function App() {
       : '';
 
   const onConvert = async () => {
-    if (!api || !input || !output) return;
+    if (!inTauri || !input || !output) return;
     setBusy(true);
     setError('');
     setResult('');
     setProgress(0);
     setProgressMsg('准备中…');
 
-    const opts = {
+    const opts: ConvertOptions = {
       input,
       output,
       width: mode === 'simple' ? 480 : width,
@@ -167,21 +174,24 @@ export default function App() {
   };
 
   const onCancel = async () => {
-    if (!api) return;
+    if (!inTauri) return;
     await api.cancelConvert();
   };
 
-  if (!inElectron) {
+  if (!inTauri) {
     return (
       <div className="app">
         <div className="main">
           <div className="card">
             <h2>提示</h2>
             <p className="hint">
-              请通过 Electron 启动本应用：<code>npm run electron:dev</code>
+              请通过 Tauri 启动本应用：<code>npm run tauri:dev</code>
               。浏览器预览无法访问本地文件路径与 ffmpeg。
             </p>
-            <p className="hint">无界面环境下可用：<code>npm run smoke</code></p>
+            <p className="hint">
+              无界面冒烟测试：<code>npm run smoke</code> 或{' '}
+              <code>cargo test -p video-sdk</code>
+            </p>
           </div>
         </div>
       </div>
@@ -264,7 +274,11 @@ export default function App() {
               <span className="chip">调色板优化</span>
               <span className="chip">最长 15s</span>
             </div>
-            {durationWarn && <p className="warn" style={{ marginTop: 12 }}>{durationWarn}</p>}
+            {durationWarn && (
+              <p className="warn" style={{ marginTop: 12 }}>
+                {durationWarn}
+              </p>
+            )}
           </div>
         )}
 
@@ -391,7 +405,9 @@ export default function App() {
         {mode === 'simple' && input && (
           <div className="card">
             <h2>输出</h2>
-            <p className="hint" style={{ wordBreak: 'break-all' }}>{output || '（自动）'}</p>
+            <p className="hint" style={{ wordBreak: 'break-all' }}>
+              {output || '（自动）'}
+            </p>
             <div style={{ marginTop: 10 }}>
               <button type="button" className="btn" onClick={onPickOutput} disabled={busy}>
                 更改保存位置…
@@ -420,11 +436,11 @@ export default function App() {
               <button
                 type="button"
                 className="btn"
-                onClick={() => api?.showItemInFolder(result)}
+                onClick={() => api.showItemInFolder(result)}
               >
                 在文件夹中显示
               </button>
-              <button type="button" className="btn" onClick={() => api?.openPath(result)}>
+              <button type="button" className="btn" onClick={() => api.openGif(result)}>
                 打开 GIF
               </button>
             </>
@@ -457,7 +473,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        ffmpeg: {ffmpegPath || '…'} · Electron + Vite + React
+        ffmpeg: {ffmpegPath || '…'} · Tauri 2 + Vite + React · video-sdk
       </footer>
     </div>
   );

@@ -1,0 +1,20 @@
+[package]
+name = "video-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable ffmpeg-backed video→GIF conversion SDK (palettegen/paletteuse)"
+license = "MIT"
+authors = ["ledshic"]
+readme = "README.md"
+keywords = ["ffmpeg", "gif", "video", "palette"]
+categories = ["multimedia"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+regex = "1"
+which = "7"
+
+[dev-dependencies]
+tempfile = "3"
