@@ -1,0 +1,14 @@
+node_modules/
+dist/
+release/
+tmp-smoke/
+*.log
+.DS_Store
+.env
+.env.*
+resources/ffmpeg/linux-*/ffmpeg
+resources/ffmpeg/darwin-*/ffmpeg
+resources/ffmpeg/win32-*/ffmpeg.exe
+resources/ffmpeg/**/ffprobe
+resources/ffmpeg/**/ffprobe.exe
+!resources/ffmpeg/README.md
