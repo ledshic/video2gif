@@ -171,7 +171,7 @@ where
         .spawn()
         .map_err(|e| {
             SdkError::FfmpegNotFound(format!(
-                "无法启动 ffmpeg ({}): {e}",
+                "failed to start ffmpeg ({}): {e}",
                 ffmpeg.display()
             ))
         })?;
@@ -212,19 +212,19 @@ where
                     let pct = ((sec / total) * 100.0).min(99.0).round() as i32;
                     cb(ProgressUpdate {
                         pct,
-                        message: format!("转换中… {pct}%"),
+                        message: format!("Converting… {pct}%"),
                     });
                 } else {
                     cb(ProgressUpdate {
                         pct: -1,
-                        message: "转换中…".into(),
+                        message: "Converting…".into(),
                     });
                 }
             }
         } else if let Some(ref mut cb) = on_progress {
             cb(ProgressUpdate {
                 pct: -1,
-                message: "转换中…".into(),
+                message: "Converting…".into(),
             });
         }
     }
@@ -262,7 +262,7 @@ where
     if let Some(ref mut cb) = on_progress {
         cb(ProgressUpdate {
             pct: 100,
-            message: "完成".into(),
+            message: "Done".into(),
         });
     }
 

@@ -1,8 +1,8 @@
 # Video2GIF
 
-跨平台桌面应用：将视频转换为高质量 GIF（中文界面）。
+跨平台桌面应用：将视频转换为高质量 GIF（界面支持 **English / 简体中文**）。
 
-**Video → GIF converter** with chat-app-friendly presets (WeChat / Telegram / Discord style).
+**Video → GIF converter** with chat-app-friendly presets (WeChat / Telegram / Discord style). UI is bilingual (EN / 简体中文); the header toggle follows the system language and remembers your choice.
 
 ## 技术选型 / Tech stack
 
@@ -16,11 +16,13 @@
 
 ## 功能
 
+- **语言 / Language**：English 与简体中文，默认跟随系统语言
+
 ### 简易模式（默认）
 
-- 拖放或选择视频 → **一键转换**
-- 预设：宽度 480（保持比例）、12 fps、最长约 15 秒、256 色、无限循环
-- 进度条、取消、保存位置、在文件夹中显示 / 打开结果
+- 拖入视频（或点击选择）→ 自动转换
+- GIF 保存在视频同一目录（`name.gif`）
+- 静默预设：宽 480、12 fps、调色板优化；要裁剪/改参数请用高级模式
 
 ### 高级模式（右上角切换）
 
@@ -31,7 +33,7 @@
 ```
 crates/video-sdk/          # Rust SDK（ffmpeg 封装，可被其他项目依赖）
 packages/video-sdk/        # TS 类型（@video2gif/sdk）
-src/                       # React UI（中文）
+src/                       # React UI（i18n: en / zh-CN）
 src-tauri/                 # Tauri 2 应用（commands → video-sdk）
 resources/ffmpeg/          # 可选捆绑二进制
 ```

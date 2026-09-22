@@ -1,30 +1,100 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConvertOptions } from '@video2gif/sdk';
 import * as api from './api';
+import { useI18n } from './i18n/LocaleContext';
+import type { MessageKey, TFunction } from './i18n';
 
 type Mode = 'simple' | 'advanced';
+type ProgressStatus = 'idle' | 'preparing' | 'converting' | 'cancelled' | 'failed' | 'done';
 
-const DITHER_OPTIONS = [
-  { value: 'sierra2_4a', label: 'sierra2_4a（推荐）' },
-  { value: 'bayer', label: 'bayer' },
-  { value: 'floyd_steinberg', label: 'floyd_steinberg' },
-  { value: 'none', label: '无抖动' },
-];
+/** Once processing UI is shown, keep it long enough to read; let the bar finish after 100%. */
+const MIN_BUSY_MS = 600;
+const BAR_SETTLE_MS = 400;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 function basename(p: string) {
   return p.split(/[/\\]/).pop() || p;
 }
 
-function formatDuration(sec: number | null) {
-  if (sec == null || !Number.isFinite(sec)) return '未知';
-  if (sec < 60) return `${sec.toFixed(1)} 秒`;
+function formatDuration(sec: number | null, t: TFunction) {
+  if (sec == null || !Number.isFinite(sec)) return t('duration.unknown');
+  if (sec < 60) return t('duration.seconds', { n: sec.toFixed(1) });
   const m = Math.floor(sec / 60);
   const s = (sec % 60).toFixed(0);
-  return `${m} 分 ${s} 秒`;
+  return t('duration.minutes', { m, s });
+}
+
+function localizeError(raw: string, t: TFunction): string {
+  const s = raw.trim();
+  const lower = s.toLowerCase();
+  if (
+    s === '输入文件不存在' ||
+    lower === 'input file not found' ||
+    lower.startsWith('input file not found:')
+  ) {
+    return t('errors.inputMissing');
+  }
+  if (s === '未指定输出路径' || lower === 'output path not specified') {
+    return t('errors.outputMissing');
+  }
+  if (s === '已取消' || lower === 'cancelled') {
+    return t('progress.cancelled');
+  }
+  if (
+    lower.includes('ffmpeg not found') ||
+    s.includes('无法启动 ffmpeg') ||
+    lower.includes('failed to start ffmpeg')
+  ) {
+    return t('errors.ffmpegMissing', { detail: s });
+  }
+  if (
+    lower.includes('library not loaded') ||
+    lower.includes('image not found') ||
+    lower.includes('dyld[')
+  ) {
+    return t('errors.ffmpegBroken');
+  }
+  if (lower.includes('ffmpeg failed')) {
+    return t('errors.ffmpegFailed', { detail: s });
+  }
+  return s;
+}
+
+function inRect(el: HTMLElement | null, position?: { x: number; y: number }) {
+  if (!el || !position) return false;
+  const r = el.getBoundingClientRect();
+  const hits = (x: number, y: number) =>
+    x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  if (hits(position.x, position.y)) return true;
+  const dpr = window.devicePixelRatio || 1;
+  return dpr !== 1 && hits(position.x / dpr, position.y / dpr);
+}
+
+function progressLabel(status: ProgressStatus, t: TFunction): string {
+  switch (status) {
+    case 'preparing':
+      return t('progress.preparing');
+    case 'converting':
+      return t('progress.converting');
+    case 'cancelled':
+      return t('progress.cancelled');
+    case 'failed':
+      return t('progress.failed');
+    case 'done':
+      return t('progress.done');
+    default:
+      return '';
+  }
 }
 
 export default function App() {
   const inTauri = api.isTauri();
+  const { t } = useI18n();
 
   const [mode, setMode] = useState<Mode>('simple');
   const [input, setInput] = useState('');
@@ -43,10 +113,46 @@ export default function App() {
 
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [progressMsg, setProgressMsg] = useState('');
-  const [error, setError] = useState('');
+  const [progressStatus, setProgressStatus] = useState<ProgressStatus>('idle');
+  const [errorKey, setErrorKey] = useState<MessageKey | null>(null);
+  const [errorRaw, setErrorRaw] = useState('');
   const [result, setResult] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [runId, setRunId] = useState(0);
+
+  const modeRef = useRef(mode);
+  const jobRef = useRef(0);
+  const busyRef = useRef(false);
+  const headerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
+  const ditherOptions = useMemo(
+    () => [
+      { value: 'sierra2_4a', label: t('advanced.ditherRecommended') },
+      { value: 'bayer', label: 'bayer' },
+      { value: 'floyd_steinberg', label: 'floyd_steinberg' },
+      { value: 'none', label: t('advanced.ditherNone') },
+    ],
+    [t],
+  );
+
+  const displayError = errorKey
+    ? t(errorKey)
+    : errorRaw
+      ? localizeError(errorRaw, t)
+      : '';
+
+  const clearError = () => {
+    setErrorKey(null);
+    setErrorRaw('');
+  };
 
   useEffect(() => {
     if (!inTauri) return;
@@ -65,117 +171,230 @@ export default function App() {
   useEffect(() => {
     if (!inTauri) return;
     let unlisten: (() => void) | undefined;
-    api.onProgress(({ pct, message }) => {
-      if (pct >= 0) setProgress(pct);
-      setProgressMsg(message);
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    api
+      .onProgress(({ pct }) => {
+        if (!busyRef.current) return;
+        if (pct >= 0) {
+          setProgress((prev) => Math.max(prev, Math.min(pct, 96)));
+        }
+        setProgressStatus('converting');
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
     return () => {
       unlisten?.();
     };
   }, [inTauri]);
 
+  const beginProcessing = (filePath?: string) => {
+    busyRef.current = true;
+    setBusy(true);
+    clearError();
+    setResult('');
+    setProgress(12);
+    setProgressStatus('converting');
+    if (filePath) {
+      setInput(filePath);
+      setDuration(null);
+    }
+  };
+
+  const runConvert = useCallback(
+    async (
+      _filePath: string,
+      outPath: string,
+      opts: ConvertOptions,
+      job: number,
+      startedAt: number,
+    ) => {
+      beginProcessing();
+
+      const res = await api.convert(opts);
+      if (job !== jobRef.current) return;
+
+      if (res.cancelled) {
+        busyRef.current = false;
+        setBusy(false);
+        setProgressStatus('cancelled');
+        return;
+      }
+      if (!res.ok) {
+        busyRef.current = false;
+        setBusy(false);
+        setErrorRaw(res.error || '');
+        if (!res.error) setErrorKey('errors.convertFailed');
+        setProgressStatus('failed');
+        return;
+      }
+
+      setProgress(100);
+      const wait = Math.max(
+        MIN_BUSY_MS - (performance.now() - startedAt),
+        BAR_SETTLE_MS,
+      );
+      if (wait > 0) await sleep(wait);
+      if (job !== jobRef.current) return;
+
+      busyRef.current = false;
+      setBusy(false);
+      setProgressStatus('done');
+      setResult(res.output || outPath);
+    },
+    [],
+  );
+
+  const startSimpleConvert = useCallback(
+    async (filePath: string) => {
+      if (!inTauri || !filePath) return;
+      const job = ++jobRef.current;
+      const startedAt = performance.now();
+      setRunId(job);
+      beginProcessing(filePath);
+      const out = await api.defaultOutputPath(filePath);
+      if (job !== jobRef.current) return;
+      setOutput(out);
+      await runConvert(
+        filePath,
+        out,
+        {
+          input: filePath,
+          output: out,
+          width: 480,
+          fps: 12,
+          start: 0,
+          loop: 0,
+          colors: 256,
+          dither: 'sierra2_4a',
+          speed: 1,
+        },
+        job,
+        startedAt,
+      );
+    },
+    [inTauri, runConvert],
+  );
+
   const loadFile = useCallback(
     async (filePath: string) => {
       if (!inTauri || !filePath) return;
       setInput(filePath);
-      setError('');
+      clearError();
       setResult('');
+      setProgressStatus('idle');
       const out = await api.defaultOutputPath(filePath);
       setOutput(out);
       const dur = await api.probeDuration(filePath);
       setDuration(dur);
-      if (dur != null && mode === 'simple') {
-        setTrimDuration(Math.min(15, Math.ceil(dur)));
-      } else if (dur != null && mode === 'advanced' && trimDuration <= 0) {
+      if (dur != null && trimDuration <= 0) {
         setTrimDuration(Math.ceil(dur));
       }
     },
-    [inTauri, mode, trimDuration],
+    [inTauri, trimDuration],
   );
 
-  const onPickVideo = async () => {
+  const acceptPath = useCallback(
+    async (filePath: string) => {
+      if (modeRef.current === 'simple') {
+        await startSimpleConvert(filePath);
+      } else {
+        await loadFile(filePath);
+      }
+    },
+    [startSimpleConvert, loadFile],
+  );
+
+  useEffect(() => {
     if (!inTauri) return;
-    const p = await api.selectVideo();
-    if (p) await loadFile(p);
+    let unlisten: (() => void) | undefined;
+    api
+      .onNativeDragDrop((state, paths, position) => {
+        const overSwitch = inRect(headerRef.current, position);
+        if (overSwitch) {
+          setDragOver(false);
+          return;
+        }
+        if (state === 'drop') {
+          setDragOver(false);
+          const p = paths?.[0];
+          if (p) void acceptPath(p);
+          return;
+        }
+        if (state === 'leave') {
+          setDragOver(false);
+          return;
+        }
+        setDragOver(true);
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, [inTauri, acceptPath]);
+
+  const onPickVideo = async () => {
+    if (!inTauri || busy) return;
+    const p = await api.selectVideo({
+      title: t('dialog.selectVideoTitle'),
+      filterName: t('dialog.selectVideoFilter'),
+    });
+    if (p) await acceptPath(p);
   };
 
   const onPickOutput = async () => {
     if (!inTauri) return;
-    const p = await api.selectOutput(basename(output) || 'output.gif');
+    const p = await api.selectOutput(
+      basename(output) || 'output.gif',
+      t('dialog.saveGifTitle'),
+    );
     if (p) setOutput(p);
   };
 
-  const onDrop = async (e: React.DragEvent) => {
+  const onHtmlDrag = (e: React.DragEvent) => {
     e.preventDefault();
-    setDragOver(false);
-    if (!inTauri) return;
-    // Tauri 2 may expose path on File via webkitGetAsEntry / drag drop plugin.
-    // Prefer dialog if path missing.
-    const file = e.dataTransfer.files?.[0] as File & { path?: string };
-    if (!file) return;
-    const p = file.path;
-    if (!p) {
-      setError('请通过「选择视频」按钮选择本地文件（拖放路径在部分环境下不可用）。');
-      return;
-    }
-    await loadFile(p);
+    e.stopPropagation();
   };
 
   const effectiveDuration = useMemo(() => {
-    if (mode === 'simple') {
-      if (duration == null) return 15;
-      return Math.min(15, duration);
-    }
     return trimDuration > 0 ? trimDuration : undefined;
-  }, [mode, duration, trimDuration]);
+  }, [trimDuration]);
 
-  const durationWarn =
-    mode === 'simple' && duration != null && duration > 15
-      ? `视频约 ${formatDuration(duration)}，简易模式将只转换前 15 秒（聊天应用友好）。可切换到「高级」调整。`
-      : '';
-
-  const onConvert = async () => {
+  const onConvertAdvanced = async () => {
     if (!inTauri || !input || !output) return;
-    setBusy(true);
-    setError('');
-    setResult('');
-    setProgress(0);
-    setProgressMsg('准备中…');
-
-    const opts: ConvertOptions = {
+    const job = ++jobRef.current;
+    const startedAt = performance.now();
+    setRunId(job);
+    beginProcessing();
+    await runConvert(
       input,
       output,
-      width: mode === 'simple' ? 480 : width,
-      fps: mode === 'simple' ? 12 : fps,
-      start: mode === 'simple' ? 0 : start > 0 ? start : undefined,
-      duration: effectiveDuration,
-      loop: mode === 'simple' ? 0 : loop,
-      colors: mode === 'simple' ? 256 : colors,
-      dither: mode === 'simple' ? 'sierra2_4a' : dither,
-      speed: mode === 'simple' ? 1 : speed,
-    };
-
-    const res = await api.convert(opts);
-    setBusy(false);
-    if (res.cancelled) {
-      setProgressMsg('已取消');
-      return;
-    }
-    if (!res.ok) {
-      setError(res.error || '转换失败');
-      setProgressMsg('失败');
-      return;
-    }
-    setProgress(100);
-    setProgressMsg('完成');
-    setResult(res.output || output);
+      {
+        input,
+        output,
+        width,
+        fps,
+        start: start > 0 ? start : undefined,
+        duration: effectiveDuration,
+        loop,
+        colors,
+        dither,
+        speed,
+      },
+      job,
+      startedAt,
+    );
   };
 
   const onCancel = async () => {
     if (!inTauri) return;
-    await api.cancelConvert();
+    const cancelled = await api.cancelConvert();
+    if (!cancelled) return;
+    jobRef.current += 1;
+    busyRef.current = false;
+    setBusy(false);
+    setProgressStatus('cancelled');
   };
 
   if (!inTauri) {
@@ -183,13 +402,16 @@ export default function App() {
       <div className="app">
         <div className="main">
           <div className="card">
-            <h2>提示</h2>
+            <h2>{t('browser.title')}</h2>
             <p className="hint">
-              请通过 Tauri 启动本应用：<code>npm run tauri:dev</code>
-              。浏览器预览无法访问本地文件路径与 ffmpeg。
+              {t('browser.tauriHintBefore')}
+              <code>npm run tauri:dev</code>
+              {t('browser.tauriHintAfter')}
             </p>
             <p className="hint">
-              无界面冒烟测试：<code>npm run smoke</code> 或{' '}
+              {t('browser.smokeHintBefore')}
+              <code>npm run smoke</code>
+              {t('browser.smokeHintMid')}
               <code>cargo test -p video-sdk</code>
             </p>
           </div>
@@ -198,51 +420,102 @@ export default function App() {
     );
   }
 
+  const simpleBusy = mode === 'simple' && busy;
+  const simpleDone = mode === 'simple' && !busy && progressStatus === 'done' && result;
+  const simpleFailed = mode === 'simple' && !busy && !!displayError;
+
   return (
-    <div className="app">
-      <header className="header">
-        <div className="brand">
-          <div className="logo">GIF</div>
-          <div>
-            <h1>Video2GIF</h1>
-            <p>视频转 GIF · 聊天应用友好预设</p>
-          </div>
-        </div>
-        <div className="mode-switch" title="切换模式">
+    <div className={`app ${mode === 'simple' ? 'app-simple' : ''}`}>
+      <header
+        ref={headerRef}
+        className="header"
+        onDragEnter={(e) => e.stopPropagation()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDragLeave={(e) => e.stopPropagation()}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        <div className="mode-switch" role="group" title={t('app.modeTitle')}>
           <button
             type="button"
             className={mode === 'simple' ? 'active' : ''}
             onClick={() => setMode('simple')}
           >
-            简易
+            {t('mode.simple')}
           </button>
           <button
             type="button"
             className={mode === 'advanced' ? 'active' : ''}
             onClick={() => setMode('advanced')}
           >
-            高级
+            {t('mode.advanced')}
           </button>
         </div>
       </header>
 
-      <main className="main">
+      <main className={mode === 'simple' ? 'main main-simple' : 'main'}>
         <div
-          className={`dropzone ${dragOver ? 'dragover' : ''} ${input ? 'has-file' : ''}`}
-          onDragOver={(e) => {
-            e.preventDefault();
+          className={[
+            'dropzone',
+            mode === 'simple' ? 'dropzone-simple' : '',
+            dragOver ? 'dragover' : '',
+            mode === 'advanced' && input ? 'has-file' : '',
+            simpleBusy ? 'busy' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onDragOver={onHtmlDrag}
+          onDragEnter={(e) => {
+            onHtmlDrag(e);
             setDragOver(true);
           }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={onDrop}
+          onDrop={onHtmlDrag}
+          onClick={() => {
+            if (mode === 'simple' && !busy) void onPickVideo();
+          }}
+          role={mode === 'simple' ? 'button' : undefined}
+          tabIndex={mode === 'simple' && !busy ? 0 : undefined}
+          onKeyDown={(e) => {
+            if (mode === 'simple' && !busy && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault();
+              void onPickVideo();
+            }
+          }}
         >
-          {!input ? (
+          {mode === 'simple' ? (
+            <SimpleDropBody
+              t={t}
+              busy={simpleBusy}
+              done={!!simpleDone}
+              failed={!!simpleFailed}
+              input={input}
+              result={result}
+              progress={progress}
+              progressStatus={progressStatus}
+              runId={runId}
+              displayError={displayError}
+              onCancel={(e) => {
+                e.stopPropagation();
+                void onCancel();
+              }}
+              onReveal={(e) => {
+                e.stopPropagation();
+                if (result) void api.showItemInFolder(result);
+              }}
+            />
+          ) : !input ? (
             <>
-              <p className="drop-title">拖放视频到此处</p>
-              <p className="drop-sub">支持 mp4 / mov / webm / mkv / avi 等常见格式</p>
+              <p className="drop-title">{t('drop.title')}</p>
+              <p className="drop-sub">{t('drop.sub')}</p>
               <div style={{ marginTop: 16 }}>
                 <button type="button" className="btn btn-primary" onClick={onPickVideo}>
-                  选择视频…
+                  {t('drop.choose')}
                 </button>
               </div>
             </>
@@ -252,42 +525,24 @@ export default function App() {
                 <strong>{basename(input)}</strong>
                 <span>
                   {input}
-                  {duration != null ? ` · 时长 ${formatDuration(duration)}` : ''}
+                  {duration != null
+                    ? t('drop.duration', { duration: formatDuration(duration, t) })
+                    : ''}
                 </span>
               </div>
               <button type="button" className="btn" onClick={onPickVideo} disabled={busy}>
-                更换…
+                {t('drop.change')}
               </button>
             </div>
           )}
         </div>
 
-        {mode === 'simple' && (
-          <div className="card">
-            <h2>简易预设（微信 / Telegram / Discord 友好）</h2>
-            <p className="hint">
-              宽度 ≤ 480px · 12 fps · palettegen/paletteuse · 最长约 15 秒 · sierra2_4a 抖动
-            </p>
-            <div className="preset-chips">
-              <span className="chip">宽 480</span>
-              <span className="chip">12 fps</span>
-              <span className="chip">调色板优化</span>
-              <span className="chip">最长 15s</span>
-            </div>
-            {durationWarn && (
-              <p className="warn" style={{ marginTop: 12 }}>
-                {durationWarn}
-              </p>
-            )}
-          </div>
-        )}
-
         {mode === 'advanced' && (
           <div className="card">
-            <h2>高级参数</h2>
+            <h2>{t('advanced.title')}</h2>
             <div className="grid">
               <div className="field">
-                <label htmlFor="width">宽度（保持比例）</label>
+                <label htmlFor="width">{t('advanced.width')}</label>
                 <input
                   id="width"
                   type="number"
@@ -299,7 +554,7 @@ export default function App() {
                 />
               </div>
               <div className="field">
-                <label htmlFor="fps">帧率 (fps)</label>
+                <label htmlFor="fps">{t('advanced.fps')}</label>
                 <input
                   id="fps"
                   type="number"
@@ -311,7 +566,7 @@ export default function App() {
                 />
               </div>
               <div className="field">
-                <label htmlFor="start">起始时间（秒）</label>
+                <label htmlFor="start">{t('advanced.start')}</label>
                 <input
                   id="start"
                   type="number"
@@ -323,7 +578,7 @@ export default function App() {
                 />
               </div>
               <div className="field">
-                <label htmlFor="trim">截取时长（秒）</label>
+                <label htmlFor="trim">{t('advanced.trim')}</label>
                 <input
                   id="trim"
                   type="number"
@@ -335,7 +590,7 @@ export default function App() {
                 />
               </div>
               <div className="field">
-                <label htmlFor="loop">循环（0=无限，-1=不循环）</label>
+                <label htmlFor="loop">{t('advanced.loop')}</label>
                 <input
                   id="loop"
                   type="number"
@@ -345,7 +600,7 @@ export default function App() {
                 />
               </div>
               <div className="field">
-                <label htmlFor="colors">颜色数</label>
+                <label htmlFor="colors">{t('advanced.colors')}</label>
                 <input
                   id="colors"
                   type="number"
@@ -357,14 +612,14 @@ export default function App() {
                 />
               </div>
               <div className="field">
-                <label htmlFor="dither">抖动算法</label>
+                <label htmlFor="dither">{t('advanced.dither')}</label>
                 <select
                   id="dither"
                   value={dither}
                   onChange={(e) => setDither(e.target.value)}
                   disabled={busy}
                 >
-                  {DITHER_OPTIONS.map((o) => (
+                  {ditherOptions.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
@@ -372,7 +627,7 @@ export default function App() {
                 </select>
               </div>
               <div className="field">
-                <label htmlFor="speed">播放速度（1=原速）</label>
+                <label htmlFor="speed">{t('advanced.speed')}</label>
                 <input
                   id="speed"
                   type="number"
@@ -385,7 +640,7 @@ export default function App() {
                 />
               </div>
               <div className="field full">
-                <label htmlFor="output">输出路径</label>
+                <label htmlFor="output">{t('advanced.outputPath')}</label>
                 <div className="path-row">
                   <input
                     id="output"
@@ -394,7 +649,7 @@ export default function App() {
                     disabled={busy}
                   />
                   <button type="button" className="btn" onClick={onPickOutput} disabled={busy}>
-                    浏览…
+                    {t('advanced.browse')}
                   </button>
                 </div>
               </div>
@@ -402,79 +657,148 @@ export default function App() {
           </div>
         )}
 
-        {mode === 'simple' && input && (
-          <div className="card">
-            <h2>输出</h2>
-            <p className="hint" style={{ wordBreak: 'break-all' }}>
-              {output || '（自动）'}
-            </p>
-            <div style={{ marginTop: 10 }}>
-              <button type="button" className="btn" onClick={onPickOutput} disabled={busy}>
-                更改保存位置…
+        {mode === 'advanced' && (
+          <div className="actions">
+            {!busy ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!input || !output}
+                onClick={onConvertAdvanced}
+              >
+                {t('actions.convertAdvanced')}
               </button>
-            </div>
+            ) : (
+              <button type="button" className="btn btn-danger" onClick={onCancel}>
+                {t('actions.cancel')}
+              </button>
+            )}
+            {result && (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => api.showItemInFolder(result)}
+                >
+                  {t('actions.showInFolder')}
+                </button>
+                <button type="button" className="btn" onClick={() => api.openGif(result)}>
+                  {t('actions.openGif')}
+                </button>
+              </>
+            )}
           </div>
         )}
 
-        <div className="actions">
-          {!busy ? (
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!input || !output}
-              onClick={onConvert}
-            >
-              {mode === 'simple' ? '一键转换为 GIF' : '开始生成'}
-            </button>
-          ) : (
-            <button type="button" className="btn btn-danger" onClick={onCancel}>
-              取消转换
-            </button>
-          )}
-          {result && (
-            <>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => api.showItemInFolder(result)}
-              >
-                在文件夹中显示
-              </button>
-              <button type="button" className="btn" onClick={() => api.openGif(result)}>
-                打开 GIF
-              </button>
-            </>
-          )}
-        </div>
-
-        {(busy || progressMsg) && (
+        {mode === 'advanced' && (busy || progressStatus !== 'idle') && (
           <div className="card">
             <div className="progress-label">
-              <span>{progressMsg || '转换中…'}</span>
+              <span>{progressLabel(progressStatus, t)}</span>
               <span>{progress >= 0 ? `${progress}%` : ''}</span>
             </div>
             <div className="progress">
-              <span style={{ width: `${Math.max(0, progress)}%` }} />
+              <span key={runId} style={{ width: `${Math.max(0, progress)}%` }} />
             </div>
           </div>
         )}
 
-        {error && (
+        {mode === 'advanced' && displayError && (
           <div className="card">
-            <p className="error">{error}</p>
+            <p className="error">{displayError}</p>
           </div>
         )}
 
-        {result && !error && (
+        {mode === 'advanced' && result && !displayError && (
           <div className="card">
-            <p className="success">已保存：{result}</p>
+            <p className="success">{t('status.saved', { path: result })}</p>
           </div>
         )}
       </main>
 
-      <footer className="footer">
-        ffmpeg: {ffmpegPath || '…'} · Tauri 2 + Vite + React · video-sdk
-      </footer>
+      {mode === 'advanced' && (
+        <footer className="footer">
+          ffmpeg: {ffmpegPath || '…'} · Tauri 2 + Vite + React · video-sdk
+        </footer>
+      )}
     </div>
   );
 }
+
+function SimpleDropBody({
+  t,
+  busy,
+  done,
+  failed,
+  input,
+  result,
+  progress,
+  progressStatus,
+  runId,
+  displayError,
+  onCancel,
+  onReveal,
+}: {
+  t: TFunction;
+  busy: boolean;
+  done: boolean;
+  failed: boolean;
+  input: string;
+  result: string;
+  progress: number;
+  progressStatus: ProgressStatus;
+  runId: number;
+  displayError: string;
+  onCancel: (e: React.MouseEvent) => void;
+  onReveal: (e: React.MouseEvent) => void;
+}) {
+  if (failed) {
+    return (
+      <>
+        <p className="drop-title">{t('simple.dropTitle')}</p>
+        <p className="error">{displayError}</p>
+        <p className="drop-sub">{t('simple.orClick')}</p>
+      </>
+    );
+  }
+
+  if (!busy && !done) {
+    return (
+      <>
+        <p className="drop-title">{t('simple.dropTitle')}</p>
+        <p className="drop-sub">{t('simple.dropSub')}</p>
+        <p className="drop-sub drop-or">{t('simple.orClick')}</p>
+      </>
+    );
+  }
+
+  const barWidth = done ? 100 : Math.max(0, progress);
+  const finishing = busy && progress >= 100;
+
+  return (
+    <>
+      <p
+        className={`drop-title ${done ? 'success clickable' : ''}`}
+        onClick={done ? onReveal : undefined}
+      >
+        {done
+          ? t('simple.saved', { name: basename(result) })
+          : t('simple.converting', { name: basename(input) || '…' })}
+      </p>
+      <div className="progress simple-progress">
+        <span key={runId} style={{ width: `${barWidth}%` }} />
+      </div>
+      <p className="drop-sub">
+        {done
+          ? t('simple.dropTitle')
+          : `${progressLabel(progressStatus, t)}${progress >= 0 ? ` ${Math.min(progress, 100)}%` : ''}`}
+      </p>
+      {busy && !finishing && (
+        <button type="button" className="btn btn-danger" onClick={onCancel}>
+          {t('actions.cancel')}
+        </button>
+      )}
+    </>
+  );
+}
+
+

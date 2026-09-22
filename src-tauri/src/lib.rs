@@ -115,7 +115,7 @@ fn convert(
         return ConvertResult {
             ok: false,
             output: None,
-            error: Some("输入文件不存在".into()),
+            error: Some("Input file not found".into()),
             cancelled: None,
         };
     }
@@ -123,7 +123,7 @@ fn convert(
         return ConvertResult {
             ok: false,
             output: None,
-            error: Some("未指定输出路径".into()),
+            error: Some("Output path not specified".into()),
             cancelled: None,
         };
     }
@@ -181,7 +181,7 @@ fn convert(
         Err(video_sdk::SdkError::Cancelled) => ConvertResult {
             ok: false,
             output: None,
-            error: Some("已取消".into()),
+            error: Some("Cancelled".into()),
             cancelled: Some(true),
         },
         Err(e) => ConvertResult {

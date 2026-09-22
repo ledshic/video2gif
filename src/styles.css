@@ -47,6 +47,7 @@ button {
 
 .app {
   min-height: 100vh;
+  position: relative;
   display: flex;
   flex-direction: column;
   background:
@@ -57,69 +58,40 @@ button {
 
 .header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 22px;
-  border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(8px);
-  background: rgba(15, 17, 21, 0.75);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #5b8cff, #3ecf8e);
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: 13px;
-  color: #0b1020;
-}
-
-.brand h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: 0.2px;
-}
-
-.brand p {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--muted);
+  justify-content: flex-end;
+  flex-shrink: 0;
+  padding: 10px 16px 8px;
+  background: transparent;
+  position: relative;
+  z-index: 20;
 }
 
 .mode-switch {
   display: inline-flex;
-  padding: 4px;
-  border-radius: 999px;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
+  align-items: center;
   gap: 2px;
+  background: none;
+  border: none;
+  padding: 0;
 }
 
 .mode-switch button {
-  padding: 6px 14px;
-  border-radius: 999px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 0;
+  background: none;
   color: var(--muted);
   font-size: 13px;
-  transition: 0.15s ease;
+  font-weight: 700;
+  transition: color 0.15s ease;
+}
+
+.mode-switch button:hover {
+  color: var(--text);
 }
 
 .mode-switch button.active {
-  background: var(--accent);
-  color: #fff;
-  font-weight: 600;
+  color: var(--text);
 }
 
 .main {
@@ -131,6 +103,65 @@ button {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.app-simple .main-simple {
+  max-width: 720px;
+  min-height: 0;
+}
+
+.dropzone-simple {
+  flex: 1;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 48px 28px;
+}
+
+.dropzone-simple.busy {
+  cursor: default;
+}
+
+.dropzone-simple .drop-title {
+  font-size: 22px;
+  font-weight: 650;
+  transition: color 0.25s ease;
+}
+
+.dropzone-simple .drop-title.success {
+  font-size: 22px;
+}
+
+.dropzone-simple .drop-or {
+  margin-top: 4px;
+  opacity: 0.85;
+}
+
+.simple-progress {
+  width: min(420px, 80%);
+  margin-top: 6px;
+}
+
+.dropzone-simple.busy .drop-title,
+.dropzone-simple.busy .simple-progress {
+  animation: status-in 0.18s ease;
+}
+
+@keyframes status-in {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover {
+  text-decoration: underline;
 }
 
 .dropzone {
@@ -342,7 +373,7 @@ button {
   display: block;
   height: 100%;
   background: linear-gradient(90deg, var(--accent), #3ecf8e);
-  transition: width 0.2s ease;
+  transition: width 0.45s ease;
 }
 
 .progress-label {
@@ -360,18 +391,4 @@ button {
   font-size: 11px;
 }
 
-.preset-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
 
-.chip {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(91, 140, 255, 0.12);
-  color: #a9c2ff;
-  border: 1px solid rgba(91, 140, 255, 0.25);
-}
