@@ -1,6 +1,6 @@
-# Bundled ffmpeg (optional)
+# Bundled FFmpeg
 
-Place platform binaries here for packaging:
+Run `npm run prepare:ffmpeg` to stage the current platform binaries here:
 
 ```
 resources/ffmpeg/
@@ -12,10 +12,10 @@ resources/ffmpeg/
   win32-arm64/ffmpeg.exe
 ```
 
-Also include `ffprobe` / `ffprobe.exe` beside `ffmpeg` when possible.
+The script includes `ffprobe` / `ffprobe.exe` beside `ffmpeg`.
 
 - **Dev**: system `ffmpeg` on PATH, or `VIDEO_SDK_FFMPEG` / `VIDEO2GIF_FFMPEG`.
-- **Tauri packaging**: listed under `src-tauri/tauri.conf.json` → `bundle.resources`.
-  Alternatively use Tauri `externalBin` / sidecar (rename binaries to `ffmpeg-<target-triple>`).
+- **Tauri dev/build**: `npm run tauri:dev` and `npm run tauri:build` run the preparation script automatically.
+- **Tauri packaging**: files are listed under `src-tauri/tauri.conf.json` -> `bundle.resources`.
 
-Sources: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases), `ffmpeg-static` npm package, etc.
+Sources: `ffmpeg-static` and `@ffprobe-installer/ffprobe` npm packages.

@@ -134,8 +134,10 @@ video-sdk = "0.1"
 
 | 场景 | 行为 |
 |------|------|
-| 开发 | 系统 `ffmpeg`；或 `VIDEO_SDK_FFMPEG` / `VIDEO2GIF_FFMPEG` |
-| 打包发布 | 将各平台静态二进制放到 `resources/ffmpeg/<platform>-<arch>/` |
+| Web 开发 | 系统 `ffmpeg`；或 `VIDEO_SDK_FFMPEG` / `VIDEO2GIF_FFMPEG` |
+| Tauri 开发 / 打包 | `npm run tauri:dev` 和 `npm run tauri:build` 自动准备当前平台的静态二进制 |
+
+也可以运行 `npm run prepare:ffmpeg` 单独准备二进制。文件会写入以下目录约定：
 
 目录约定：
 
@@ -149,7 +151,7 @@ resources/ffmpeg/
   win32-arm64/ffmpeg.exe
 ```
 
-Tauri：`src-tauri/tauri.conf.json` 的 `bundle.resources` 会打进安装包；也可改为 sidecar / `externalBin`。
+Tauri：`src-tauri/tauri.conf.json` 的 `bundle.resources` 会将生成的文件打进安装包。
 
 参考：[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases)。
 

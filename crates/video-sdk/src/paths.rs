@@ -100,10 +100,37 @@ fn bundled_candidates(root: &Path, tool: &str) -> Vec<PathBuf> {
             .join("ffmpeg")
             .join(&platform_dir)
             .join(&bin),
+        root.join("_up_")
+            .join("resources")
+            .join("ffmpeg")
+            .join(&platform_dir)
+            .join(&bin),
         root.join("resources").join("ffmpeg").join(&bin),
+        root.join("_up_")
+            .join("resources")
+            .join("ffmpeg")
+            .join(&bin),
         root.join("ffmpeg").join(&platform_dir).join(&bin),
         root.join("ffmpeg").join(&bin),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundled_candidates;
+    use std::path::Path;
+
+    #[test]
+    fn includes_tauri_packaged_resource_layout() {
+        let candidates = bundled_candidates(Path::new("/app/Resources"), "ffmpeg");
+
+        assert!(candidates.iter().any(|candidate| {
+            candidate.starts_with("/app/Resources/_up_/resources/ffmpeg")
+                && candidate
+                    .file_name()
+                    .is_some_and(|name| name == "ffmpeg" || name == "ffmpeg.exe")
+        }));
+    }
 }
 
 /// Suggest a unique default output path next to the input (`name.gif`, `name_1.gif`, …).
